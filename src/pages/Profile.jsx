@@ -56,7 +56,7 @@ const Profile = () => {
 
     const executeUpdate = async (updates) => {
         try {
-            await updateProfile(currentUser.id, updates, formData.currentPassword);
+            await updateProfile(currentUser.uid, updates, formData.currentPassword);
             setSuccess('Profile updated successfully!');
             setIsEditing(false);
             setFormData({

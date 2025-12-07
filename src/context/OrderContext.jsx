@@ -1,4 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { db } from '../config/firebase';
+import { collection, addDoc, query, where, getDocs, orderBy, onSnapshot } from 'firebase/firestore';
+import { useAuth } from './AuthContext';
 
 const OrderContext = createContext();
 
@@ -12,28 +15,47 @@ export const useOrders = () => {
 
 export const OrderProvider = ({ children }) => {
     const [orders, setOrders] = useState([]);
+    const { currentUser } = useAuth();
 
     useEffect(() => {
-        // Load orders from localStorage on mount
-        const savedOrders = localStorage.getItem('orders');
-        if (savedOrders) {
-            setOrders(JSON.parse(savedOrders));
+        if (!currentUser) {
+            setOrders([]);
+            return;
         }
-    }, []);
 
-    const createOrder = (orderData) => {
-        const newOrder = {
-            id: `ORD-${Date.now()}`,
-            ...orderData,
-            status: 'pending',
-            createdAt: new Date().toISOString(),
-        };
+        // Real-time listener for user's orders
+        const q = query(
+            collection(db, 'orders'),
+            where('userId', '==', currentUser.uid)
+        );
 
-        const updatedOrders = [newOrder, ...orders];
-        setOrders(updatedOrders);
-        localStorage.setItem('orders', JSON.stringify(updatedOrders));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const userOrders = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            setOrders(userOrders);
+        });
 
-        return newOrder;
+        return unsubscribe;
+    }, [currentUser]);
+
+    const createOrder = async (orderData) => {
+        try {
+            const newOrder = {
+                ...orderData,
+                status: 'pending',
+                createdAt: new Date().toISOString(),
+                // Ensure userId is attached if not already
+                userId: currentUser ? currentUser.uid : 'guest'
+            };
+
+            const docRef = await addDoc(collection(db, 'orders'), newOrder);
+            return { id: docRef.id, ...newOrder };
+        } catch (error) {
+            console.error("Error creating order: ", error);
+            throw error;
+        }
     };
 
     const getOrderById = (orderId) => {

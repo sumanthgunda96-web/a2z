@@ -1,4 +1,15 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import {
+    createUserWithEmailAndPassword,
+    signInWithEmailAndPassword,
+    signOut,
+    onAuthStateChanged,
+    updateProfile as firebaseUpdateProfile,
+    sendPasswordResetEmail,
+    fetchSignInMethodsForEmail
+} from 'firebase/auth';
+import { auth, db } from '../config/firebase';
+import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
 import { logUserToSheets } from '../utils/sheetsService';
 
 const AuthContext = createContext();
@@ -16,136 +27,91 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // Check if user is logged in on mount
-        const user = localStorage.getItem('currentUser');
-        if (user) {
-            try {
-                setCurrentUser(JSON.parse(user));
-            } catch (error) {
-                console.error('Failed to parse currentUser from localStorage', error);
-                localStorage.removeItem('currentUser');
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                // Fetch additional user data from Firestore
+                const userDoc = await getDoc(doc(db, 'users', user.uid));
+                if (userDoc.exists()) {
+                    setCurrentUser({ ...user, ...userDoc.data() });
+                } else {
+                    setCurrentUser(user);
+                }
+            } else {
+                setCurrentUser(null);
             }
-        }
-        setLoading(false);
-    }, []);
-
-    const signup = (email, password, name) => {
-        // Get existing users
-        const users = JSON.parse(localStorage.getItem('users') || '[]');
-
-        // Check if user already exists
-        if (users.find(u => u.email === email)) {
-            throw new Error('User already exists with this email');
-        }
-
-        // Create new user
-        const newUser = {
-            id: Date.now().toString(),
-            email,
-            password, // In production, this should be hashed!
-            name,
-            createdAt: new Date().toISOString()
-        };
-
-        // Save to users array
-        users.push(newUser);
-        localStorage.setItem('users', JSON.stringify(users));
-
-        // Log to Google Sheets
-        logUserToSheets({
-            userId: newUser.id,
-            name: newUser.name,
-            email: newUser.email
+            setLoading(false);
         });
 
-        return newUser;
+        return unsubscribe;
+    }, []);
+
+    const signup = async (email, password, name) => {
+        try {
+            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+            const user = userCredential.user;
+
+            // Update profile with name
+            await firebaseUpdateProfile(user, { displayName: name });
+
+            // Create user document in Firestore
+            const userData = {
+                uid: user.uid,
+                email: user.email,
+                name: name,
+                createdAt: new Date().toISOString(),
+                role: 'user' // Default role
+            };
+
+            await setDoc(doc(db, 'users', user.uid), userData);
+
+            // Log to Google Sheets
+            logUserToSheets({
+                userId: user.uid,
+                name: name,
+                email: email
+            });
+
+            return user;
+        } catch (error) {
+            throw error;
+        }
     };
 
     const login = (email, password) => {
-        const users = JSON.parse(localStorage.getItem('users') || '[]');
-        const user = users.find(u => u.email === email && u.password === password);
-
-        if (!user) {
-            throw new Error('Invalid email or password');
-        }
-
-        // Set current user
-        const userWithoutPassword = { ...user };
-        delete userWithoutPassword.password;
-
-        setCurrentUser(userWithoutPassword);
-        localStorage.setItem('currentUser', JSON.stringify(userWithoutPassword));
-
-        return userWithoutPassword;
+        return signInWithEmailAndPassword(auth, email, password);
     };
 
     const logout = () => {
-        setCurrentUser(null);
-        localStorage.removeItem('currentUser');
+        return signOut(auth);
     };
 
-    const updateProfile = (userId, updates, currentPassword = null) => {
-        const users = JSON.parse(localStorage.getItem('users') || '[]');
-        const userIndex = users.findIndex(u => u.id === userId);
+    const updateProfile = async (userId, updates) => {
+        if (!currentUser) throw new Error('No user logged in');
 
-        if (userIndex === -1) {
-            throw new Error('User not found');
-        }
+        const userRef = doc(db, 'users', userId);
 
-        const user = users[userIndex];
+        // Update Firestore
+        await updateDoc(userRef, updates);
 
-        // Verify current password if changing password or sensitive info
-        if (updates.password) {
-            if (!currentPassword) {
-                throw new Error('Current password is required to set a new password');
-            }
-            if (user.password !== currentPassword) {
-                throw new Error('Incorrect current password');
-            }
-        }
+        // Update local state
+        setCurrentUser(prev => ({ ...prev, ...updates }));
 
-        // Check if email is being updated and if it's already taken
-        if (updates.email && updates.email !== user.email) {
-            if (users.find(u => u.email === updates.email)) {
-                throw new Error('Email already in use');
-            }
-        }
-
-        // Update user
-        const updatedUser = { ...user, ...updates };
-        users[userIndex] = updatedUser;
-        localStorage.setItem('users', JSON.stringify(users));
-
-        // Update current user session if it's the logged-in user
-        if (currentUser && currentUser.id === userId) {
-            const userWithoutPassword = { ...updatedUser };
-            delete userWithoutPassword.password;
-            setCurrentUser(userWithoutPassword);
-            localStorage.setItem('currentUser', JSON.stringify(userWithoutPassword));
-        }
-
-        return updatedUser;
-    };
-
-    const resetPassword = (email, newPassword) => {
-        const users = JSON.parse(localStorage.getItem('users') || '[]');
-        const userIndex = users.findIndex(u => u.email === email);
-
-        if (userIndex === -1) {
-            throw new Error('User not found with this email');
-        }
-
-        const user = users[userIndex];
-        const updatedUser = { ...user, password: newPassword };
-        users[userIndex] = updatedUser;
-        localStorage.setItem('users', JSON.stringify(users));
-
+        // If email/password updates are needed, they require re-authentication usually, 
+        // which is complex. For now, we'll stick to profile data updates.
         return true;
     };
 
-    const verifyEmail = (email) => {
-        const users = JSON.parse(localStorage.getItem('users') || '[]');
-        return users.some(u => u.email === email);
+    const resetPassword = (email) => {
+        return sendPasswordResetEmail(auth, email);
+    };
+
+    const verifyEmail = async (email) => {
+        try {
+            const methods = await fetchSignInMethodsForEmail(auth, email);
+            return methods.length > 0;
+        } catch (error) {
+            return false;
+        }
     };
 
     const value = {

@@ -55,7 +55,7 @@ const Checkout = () => {
 
         try {
             const order = createOrder({
-                userId: currentUser.id,
+                userId: currentUser.uid,
                 userEmail: currentUser.email,
                 items: cartItems,
                 total: getCartTotal(),

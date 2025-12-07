@@ -2,11 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Package, CheckCircle, XCircle, Clock, Truck } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { db } from '../config/firebase';
+import { collection, query, orderBy, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 
 const AdminOrders = () => {
     const navigate = useNavigate();
     const { currentUser } = useAuth();
     const [orders, setOrders] = useState([]);
+    const [loading, setLoading] = useState(true);
 
     // Admin email - only this email can access admin panel
     const ADMIN_EMAIL = 'sumanthgunda96@gmail.com';
@@ -25,18 +28,30 @@ const AdminOrders = () => {
             return;
         }
 
-        // Load all orders from localStorage
-        const allOrders = JSON.parse(localStorage.getItem('orders') || '[]');
-        setOrders(allOrders);
+        // Real-time listener for ALL orders
+        const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const allOrders = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            setOrders(allOrders);
+            setLoading(false);
+        });
+
+        return unsubscribe;
     }, [currentUser, navigate]);
 
-    const updateOrderStatus = (orderId, newStatus) => {
-        const updatedOrders = orders.map(order =>
-            order.id === orderId ? { ...order, status: newStatus } : order
-        );
-        setOrders(updatedOrders);
-        localStorage.setItem('orders', JSON.stringify(updatedOrders));
-        alert(`Order ${orderId} status updated to: ${newStatus}`);
+    const updateOrderStatus = async (orderId, newStatus) => {
+        try {
+            const orderRef = doc(db, 'orders', orderId);
+            await updateDoc(orderRef, { status: newStatus });
+            alert(`Order status updated to: ${newStatus}`);
+        } catch (error) {
+            console.error("Error updating status:", error);
+            alert("Failed to update status");
+        }
     };
 
     const getStatusColor = (status) => {
@@ -73,7 +88,9 @@ const AdminOrders = () => {
                     <p className="text-slate-light mt-2">Logged in as: {currentUser.email}</p>
                 </div>
 
-                {orders.length === 0 ? (
+                {loading ? (
+                    <div className="text-center py-10">Loading orders...</div>
+                ) : orders.length === 0 ? (
                     <div className="bg-white rounded-2xl shadow-lg p-8 text-center">
                         <Package className="h-16 w-16 text-gray-400 mx-auto mb-4" />
                         <p className="text-slate-light">No orders yet</p>
