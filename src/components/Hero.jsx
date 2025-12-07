@@ -1,4 +1,4 @@
-import React from 'react';
+import { Link } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 
 const Hero = () => {
@@ -23,20 +23,20 @@ const Hero = () => {
                 </p>
                 <div className="mt-10 sm:mt-12 sm:flex sm:justify-center lg:justify-start gap-4">
                     <div className="rounded-full shadow-lg">
-                        <a
-                            href="/products"
+                        <Link
+                            to="/products"
                             className="w-full flex items-center justify-center px-8 py-4 border border-transparent text-base font-medium rounded-full text-white bg-primary hover:bg-primary-dark transition-all duration-300 transform hover:-translate-y-1 md:text-lg md:px-10 shadow-primary/50"
                         >
                             Browse Collection
-                        </a>
+                        </Link>
                     </div>
                     <div className="mt-3 sm:mt-0">
-                        <a
-                            href="/about"
+                        <Link
+                            to="/about"
                             className="w-full flex items-center justify-center px-8 py-4 border-2 border-cream text-base font-medium rounded-full text-cream hover:bg-cream hover:text-night transition-all duration-300 md:text-lg md:px-10"
                         >
                             Learn More <ArrowRight className="ml-2 h-5 w-5" />
-                        </a>
+                        </Link>
                     </div>
                 </div>
             </div>
