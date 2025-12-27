@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { FirestoreBusinessService } from '../services/firebase/FirestoreBusinessService';
+import { FirestoreUserService } from '../services/firebase/FirestoreUserService';
 import { Store, ArrowRight, Loader } from 'lucide-react';
 
 const CreateStore = () => {
@@ -15,6 +16,7 @@ const CreateStore = () => {
     const [error, setError] = useState('');
 
     const businessService = new FirestoreBusinessService();
+    const userService = new FirestoreUserService();
 
     if (!currentUser) {
         return <Navigate to="/a2z/create-account" replace />;
@@ -43,6 +45,13 @@ const CreateStore = () => {
             if (formData.slug.length < 3) {
                 throw new Error('Store URL must be at least 3 characters');
             }
+
+            // Ensure User Role is Seller
+            await userService.createUser(currentUser.uid, {
+                email: currentUser.email,
+                role: 'seller', // Upgrade role
+                updatedAt: new Date().toISOString()
+            });
 
             const newBusiness = await businessService.createBusiness({
                 name: formData.name,

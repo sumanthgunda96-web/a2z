@@ -1,12 +1,14 @@
+
 import React, { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { FirestoreUserService } from '../services/firebase/FirestoreUserService';
 import { useBusiness } from '../context/BusinessContext';
 
 const Login = () => {
     const navigate = useNavigate();
-    const { login } = useAuth();
+    const { login, googleLogin, logout } = useAuth();
     const { currentBusiness } = useBusiness();
     const [searchParams] = useSearchParams();
     const [email, setEmail] = useState('');
@@ -21,7 +23,23 @@ const Login = () => {
         setLoading(true);
 
         try {
-            await login(email, password);
+            console.log("Attempting login...");
+            const userCredential = await login(email, password);
+            console.log("Login success, user:", userCredential.user);
+
+            // Check for Banned Status
+            const userDoc = await new FirestoreUserService().getUser(userCredential.user.uid);
+            if (userDoc && userDoc.status === 'banned') {
+                await logout(); // Force logout
+                throw new Error("Your account has been suspended. Please contact support.");
+            }
+
+            const user = userCredential.user;
+
+            // Verification check removed per user request
+            // if (!user.emailVerified) { ... }
+
+
             alert("Login successful! Welcome back!");
 
             const returnUrl = searchParams.get('returnUrl');
@@ -30,10 +48,12 @@ const Login = () => {
             } else if (currentBusiness) {
                 navigate(`/a2z/${currentBusiness.slug}`);
             } else {
-                navigate('/');
+                // Default to the main demo store instead of the platform landing page
+                navigate('/a2z/a2z-demo');
             }
         } catch (err) {
-            setError(err.message || 'Failed to login');
+            console.error(err);
+            setError(err.message || 'Failed to sign in');
         } finally {
             setLoading(false);
         }
@@ -49,15 +69,15 @@ const Login = () => {
                     Or{' '}
                     <Link
                         to={currentBusiness
-                            ? `/a2z/${currentBusiness.slug}/register`
+                            ? `/ a2z / ${currentBusiness.slug}/register`
                             : `/a2z/buyer/register${searchParams.get('returnUrl') ? `?returnUrl=${encodeURIComponent(searchParams.get('returnUrl'))}` : ''}`
                         }
                         className="font-medium text-secondary hover:text-secondary-dark transition-colors"
                     >
                         create a new account
-                    </Link>
-                </p>
-            </div>
+                    </Link >
+                </p >
+            </div >
 
             <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
                 <div className="bg-white py-8 px-4 shadow-xl rounded-2xl sm:px-10 border border-gray-100">
@@ -66,6 +86,36 @@ const Login = () => {
                             {error}
                         </div>
                     )}
+
+                    <div className="mt-6">
+                        <button
+                            onClick={async () => {
+                                try {
+                                    await googleLogin();
+                                    const returnUrl = searchParams.get('returnUrl');
+                                    if (returnUrl) navigate(returnUrl);
+                                    else if (currentBusiness) navigate(`/a2z/${currentBusiness.slug}`);
+                                    else navigate('/a2z/a2z-demo');
+                                } catch (err) {
+                                    console.error("Google Login Error:", err);
+                                    alert(`Google Login failed: ${err.code} - ${err.message}`);
+                                }
+                            }}
+                            className="w-full flex justify-center py-2 px-4 border border-gray-300 rounded-xl shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 mb-6"
+                        >
+                            <img className="h-5 w-5 mr-3" src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google logo" />
+                            Sign in with Google
+                        </button>
+
+                        <div className="relative">
+                            <div className="absolute inset-0 flex items-center">
+                                <div className="w-full border-t border-gray-300" />
+                            </div>
+                            <div className="relative flex justify-center text-sm">
+                                <span className="px-2 bg-white text-gray-500">Or continue with email</span>
+                            </div>
+                        </div>
+                    </div>
 
                     <form className="space-y-6" onSubmit={handleSubmit}>
                         <div>
@@ -143,7 +193,7 @@ const Login = () => {
                     </form>
                 </div>
             </div>
-        </div>
+        </div >
     );
 };
 

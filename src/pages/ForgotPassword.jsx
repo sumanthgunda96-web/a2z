@@ -1,25 +1,33 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, ArrowLeft, Mail, KeyRound, Lock } from 'lucide-react';
+import { ArrowLeft, Mail } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { sendVerificationEmail } from '../utils/emailService';
 
-const ForgotPassword = () => {
+const ForgotPassword = ({ role = 'buyer' }) => {
     const navigate = useNavigate();
-    const { resetPassword, verifyEmail } = useAuth();
-
-    // Steps: 1 = Email, 2 = OTP, 3 = New Password
-    const [step, setStep] = useState(1);
+    const { resetPassword } = useAuth();
 
     const [email, setEmail] = useState('');
-    const [otp, setOtp] = useState('');
-    const [generatedOtp, setGeneratedOtp] = useState('');
-    const [newPassword, setNewPassword] = useState('');
-    const [confirmPassword, setConfirmPassword] = useState('');
-
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
-    const [showPassword, setShowPassword] = useState(false);
+    const [emailSent, setEmailSent] = useState(false);
+
+    // Dynamic Back Link based on Role
+    const getBackLink = () => {
+        switch (role) {
+            case 'seller': return '/a2z/seller/login';
+            case 'admin': return '/a2z/super-admin';
+            default: return '/a2z/buyer/login';
+        }
+    };
+
+    const getBackText = () => {
+        switch (role) {
+            case 'seller': return 'Back to Seller Login';
+            case 'admin': return 'Back to Super Admin';
+            default: return 'Back to Login';
+        }
+    };
 
     const handleEmailSubmit = async (e) => {
         e.preventDefault();
@@ -27,81 +35,91 @@ const ForgotPassword = () => {
         setLoading(true);
 
         try {
-            // 1. Verify email exists
-            const exists = verifyEmail(email);
-            if (!exists) {
-                throw new Error('No account found with this email address');
-            }
-
-            // 2. Generate OTP
-            const code = Math.floor(100000 + Math.random() * 900000).toString();
-            setGeneratedOtp(code);
-
-            // 3. Send Email
-            const result = await sendVerificationEmail(email, code);
-            if (!result.success) {
-                throw new Error('Failed to send verification code. Please try again.');
-            }
-
-            setStep(2);
+            await resetPassword(email);
+            setEmailSent(true);
         } catch (err) {
-            setError(err.message);
+            console.error("Reset error:", err);
+            let msg = `Error (${err.code}): ${err.message}`;
+            if (err.code === 'auth/user-not-found') msg = "No account found with this email.";
+            if (err.code === 'auth/invalid-email') msg = "Please enter a valid email address.";
+            setError(msg);
         } finally {
             setLoading(false);
         }
     };
 
-    const handleOtpSubmit = (e) => {
-        e.preventDefault();
-        setError('');
-
-        if (otp !== generatedOtp) {
-            setError('Invalid verification code');
-            return;
-        }
-
-        setStep(3);
-    };
-
-    const handlePasswordSubmit = async (e) => {
-        e.preventDefault();
-        setError('');
-
-        if (newPassword !== confirmPassword) {
-            setError('Passwords do not match');
-            return;
-        }
-
-        if (newPassword.length < 6) {
-            setError('Password must be at least 6 characters');
-            return;
-        }
-
+    const handleResend = async () => {
         setLoading(true);
-
+        setError('');
         try {
-            await resetPassword(email, newPassword);
-            alert("Password reset successful! Please login with your new password.");
-            navigate('/login');
+            await resetPassword(email);
+            alert("Reset link resent successfully!");
         } catch (err) {
-            setError(err.message || 'Failed to reset password');
+            console.error("Resend error:", err);
+            setError(`Failed to resend: ${err.message}`);
         } finally {
             setLoading(false);
         }
     };
+
+    if (emailSent) {
+        return (
+            <div className="min-h-screen bg-cream flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+                <div className="sm:mx-auto sm:w-full sm:max-w-md">
+                    <div className="bg-white py-8 px-4 shadow-xl rounded-2xl sm:px-10 border border-gray-100 text-center">
+                        <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100 mb-4">
+                            <Mail className="h-6 w-6 text-green-600" />
+                        </div>
+                        <h2 className="text-2xl font-bold text-gray-900 mb-2">Check your email</h2>
+                        <p className="text-gray-600 mb-6">
+                            We have sent a password reset link to <strong>{email}</strong>.
+                        </p>
+                        <div className="bg-blue-50 p-4 rounded-lg text-left mb-6">
+                            <p className="text-sm text-blue-800 font-medium mb-1">Did you sign up with Google?</p>
+                            <p className="text-xs text-blue-600">
+                                If you created your account using Google, you don't have a password. Please go back and click "Sign in with Google".
+                            </p>
+                        </div>
+
+                        {error && (
+                            <div className="mb-4 p-2 bg-red-50 text-red-600 text-xs rounded text-left">
+                                {error}
+                            </div>
+                        )}
+
+                        <div className="flex flex-col gap-3 mb-6">
+                            <button
+                                onClick={handleResend}
+                                disabled={loading}
+                                className="text-sm text-secondary hover:text-secondary-dark font-medium disabled:opacity-50"
+                            >
+                                {loading ? 'Sending...' : 'Didn\'t receive it? Resend Link'}
+                            </button>
+                        </div>
+
+                        <p className="text-sm text-gray-500 mb-6">
+                            Click the link in the email to reset your password, then return here to login.
+                        </p>
+                        <Link
+                            to={getBackLink()}
+                            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-xl shadow-md text-sm font-medium text-white bg-secondary hover:bg-secondary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary transition-all"
+                        >
+                            Return to Login
+                        </Link>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-cream flex flex-col justify-center py-12 sm:px-6 lg:px-8">
             <div className="sm:mx-auto sm:w-full sm:max-w-md">
                 <h2 className="mt-6 text-center text-3xl font-extrabold text-primary font-serif">
-                    {step === 1 && 'Reset Password'}
-                    {step === 2 && 'Verify Email'}
-                    {step === 3 && 'Set New Password'}
+                    {role === 'admin' ? 'Super Admin Recovery' : role === 'seller' ? 'Seller Account Recovery' : 'Reset Password'}
                 </h2>
-                <p className="mt-2 text-center text-sm text-slate-light">
-                    {step === 1 && 'Enter your email to receive a verification code'}
-                    {step === 2 && `Enter the code sent to ${email}`}
-                    {step === 3 && 'Create a new secure password'}
+                <p className="mt-2 text-center text-sm text-gray-600">
+                    Enter your email to receive a password reset link.
                 </p>
             </div>
 
@@ -113,144 +131,37 @@ const ForgotPassword = () => {
                         </div>
                     )}
 
-                    {/* STEP 1: EMAIL */}
-                    {step === 1 && (
-                        <form className="space-y-6" onSubmit={handleEmailSubmit}>
-                            <div>
-                                <label htmlFor="email" className="block text-sm font-medium text-primary">
-                                    Email address
-                                </label>
-                                <div className="mt-1 relative">
-                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                        <Mail className="h-5 w-5 text-gray-400" />
-                                    </div>
-                                    <input
-                                        id="email"
-                                        name="email"
-                                        type="email"
-                                        autoComplete="email"
-                                        required
-                                        value={email}
-                                        onChange={(e) => setEmail(e.target.value)}
-                                        className="appearance-none block w-full pl-10 px-3 py-2 border border-gray-200 rounded-xl shadow-sm placeholder-gray-400 focus:outline-none focus:ring-secondary focus:border-secondary sm:text-sm transition-colors"
-                                        placeholder="you@example.com"
-                                    />
+                    <form className="space-y-6" onSubmit={handleEmailSubmit}>
+                        <div>
+                            <label htmlFor="email" className="block text-sm font-medium text-primary">
+                                Email address
+                            </label>
+                            <div className="mt-1 relative">
+                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                    <Mail className="h-5 w-5 text-gray-400" />
                                 </div>
+                                <input
+                                    id="email"
+                                    name="email"
+                                    type="email"
+                                    autoComplete="email"
+                                    required
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    className="appearance-none block w-full pl-10 px-3 py-2 border border-gray-200 rounded-xl shadow-sm placeholder-gray-400 focus:outline-none focus:ring-secondary focus:border-secondary sm:text-sm transition-colors"
+                                    placeholder="you@example.com"
+                                />
                             </div>
+                        </div>
 
-                            <button
-                                type="submit"
-                                disabled={loading}
-                                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-xl shadow-md text-sm font-medium text-white bg-secondary hover:bg-secondary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary transition-all duration-300 transform hover:-translate-y-1 disabled:opacity-50"
-                            >
-                                {loading ? 'Sending Code...' : 'Send Verification Code'}
-                            </button>
-                        </form>
-                    )}
-
-                    {/* STEP 2: OTP */}
-                    {step === 2 && (
-                        <form className="space-y-6" onSubmit={handleOtpSubmit}>
-                            <div>
-                                <label htmlFor="otp" className="block text-sm font-medium text-primary">
-                                    Verification Code
-                                </label>
-                                <div className="mt-1 relative">
-                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                        <KeyRound className="h-5 w-5 text-gray-400" />
-                                    </div>
-                                    <input
-                                        id="otp"
-                                        name="otp"
-                                        type="text"
-                                        required
-                                        value={otp}
-                                        onChange={(e) => setOtp(e.target.value)}
-                                        className="appearance-none block w-full pl-10 px-3 py-2 border border-gray-200 rounded-xl shadow-sm placeholder-gray-400 focus:outline-none focus:ring-secondary focus:border-secondary sm:text-sm transition-colors tracking-widest"
-                                        placeholder="123456"
-                                        maxLength={6}
-                                    />
-                                </div>
-                            </div>
-
-                            <button
-                                type="submit"
-                                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-xl shadow-md text-sm font-medium text-white bg-secondary hover:bg-secondary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary transition-all duration-300 transform hover:-translate-y-1"
-                            >
-                                Verify Code
-                            </button>
-
-                            <div className="text-center">
-                                <button
-                                    type="button"
-                                    onClick={() => setStep(1)}
-                                    className="text-sm text-slate-light hover:text-primary"
-                                >
-                                    Change Email
-                                </button>
-                            </div>
-                        </form>
-                    )}
-
-                    {/* STEP 3: NEW PASSWORD */}
-                    {step === 3 && (
-                        <form className="space-y-6" onSubmit={handlePasswordSubmit}>
-                            <div>
-                                <label htmlFor="newPassword" className="block text-sm font-medium text-primary">
-                                    New Password
-                                </label>
-                                <div className="mt-1 relative">
-                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                        <Lock className="h-5 w-5 text-gray-400" />
-                                    </div>
-                                    <input
-                                        id="newPassword"
-                                        name="newPassword"
-                                        type={showPassword ? "text" : "password"}
-                                        required
-                                        value={newPassword}
-                                        onChange={(e) => setNewPassword(e.target.value)}
-                                        className="appearance-none block w-full pl-10 px-3 py-2 border border-gray-200 rounded-xl shadow-sm placeholder-gray-400 focus:outline-none focus:ring-secondary focus:border-secondary sm:text-sm transition-colors pr-10"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowPassword(!showPassword)}
-                                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
-                                    >
-                                        {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div>
-                                <label htmlFor="confirmPassword" className="block text-sm font-medium text-primary">
-                                    Confirm New Password
-                                </label>
-                                <div className="mt-1 relative">
-                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                        <Lock className="h-5 w-5 text-gray-400" />
-                                    </div>
-                                    <input
-                                        id="confirmPassword"
-                                        name="confirmPassword"
-                                        type="password"
-                                        required
-                                        value={confirmPassword}
-                                        onChange={(e) => setConfirmPassword(e.target.value)}
-                                        className="appearance-none block w-full pl-10 px-3 py-2 border border-gray-200 rounded-xl shadow-sm placeholder-gray-400 focus:outline-none focus:ring-secondary focus:border-secondary sm:text-sm transition-colors"
-                                    />
-                                </div>
-                            </div>
-
-                            <button
-                                type="submit"
-                                disabled={loading}
-                                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-xl shadow-md text-sm font-medium text-white bg-secondary hover:bg-secondary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary transition-all duration-300 transform hover:-translate-y-1 disabled:opacity-50"
-                            >
-                                {loading ? 'Resetting...' : 'Reset Password'}
-                            </button>
-                        </form>
-                    )}
+                        <button
+                            type="submit"
+                            disabled={loading}
+                            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-xl shadow-md text-sm font-medium text-white bg-secondary hover:bg-secondary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary transition-all duration-300 transform hover:-translate-y-1 disabled:opacity-50"
+                        >
+                            {loading ? 'Sending...' : 'Send Reset Link'}
+                        </button>
+                    </form>
 
                     <div className="mt-6">
                         <div className="relative">
@@ -259,14 +170,14 @@ const ForgotPassword = () => {
                             </div>
                             <div className="relative flex justify-center text-sm">
                                 <span className="px-2 bg-white text-gray-500">
-                                    Remember your password?
+                                    Or
                                 </span>
                             </div>
                         </div>
 
                         <div className="mt-6 text-center">
-                            <Link to="/login" className="font-medium text-secondary hover:text-secondary-dark flex items-center justify-center gap-2">
-                                <ArrowLeft className="h-4 w-4" /> Back to Login
+                            <Link to={getBackLink()} className="font-medium text-secondary hover:text-secondary-dark flex items-center justify-center gap-2">
+                                <ArrowLeft className="h-4 w-4" /> {getBackText()}
                             </Link>
                         </div>
                     </div>

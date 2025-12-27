@@ -18,7 +18,7 @@ const Cart = () => {
                     <ShoppingBag className="mx-auto h-16 w-16 text-gray-400" />
                     <h2 className="mt-4 text-2xl font-bold text-primary font-serif">Your cart is empty</h2>
                     <p className="mt-2 text-sm text-slate-light">
-                        Start adding some amazing fireworks to your cart!
+                        Start adding some amazing products to your cart!
                     </p>
                     <div className="mt-6">
                         <Link

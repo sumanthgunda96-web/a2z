@@ -2,11 +2,13 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Store, Mail, Lock, LogIn, ArrowRight, Loader, CheckCircle, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { FirestoreUserService } from '../services/firebase/FirestoreUserService';
 import { FirestoreBusinessService } from '../services/firebase/FirestoreBusinessService';
+import { FirestoreAdminService } from '../services/firebase/FirestoreAdminService';
 
 const BusinessLogin = () => {
     const navigate = useNavigate();
-    const { login } = useAuth();
+    const { login, logout, sendVerification, googleLogin } = useAuth();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
@@ -14,6 +16,9 @@ const BusinessLogin = () => {
     const [showPassword, setShowPassword] = useState(false);
 
     const businessService = new FirestoreBusinessService();
+    // Instantiate UserService
+    const userService = new FirestoreUserService();
+    const adminService = new FirestoreAdminService();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -24,26 +29,45 @@ const BusinessLogin = () => {
             const userCredential = await login(email, password);
             const user = userCredential.user || userCredential;
 
-            // Fetch business owned by this user
+            // CHECK BAN STATUS & SELF-HEAL
+            let userDoc = await userService.getUser(user.uid);
+
+            if (!userDoc) {
+                // Self-Heal: Create missing user document
+                console.log("User document missing, creating...");
+                await userService.createUser(user.uid, {
+                    email: user.email,
+                    role: 'seller', // Default to seller since they are trying to login as one
+                    createdAt: new Date().toISOString()
+                });
+                userDoc = { status: 'active', role: 'seller' }; // Mock for immediate check
+            }
+
+            // CHECK BLACKLIST (BANNED_USERS COLLECTION)
+            const isBanned = await adminService.isUserBanned(user.uid);
+            if (isBanned) {
+                await logout();
+                throw new Error("Your account has been blocked by the administrator.");
+            }
+
+            // 2. Fetch business owned by this user
             const businesses = await businessService.getBusinessByOwner(user.uid);
 
             if (businesses && businesses.length > 0) {
                 // Redirect to the first business admin
                 navigate(`/a2z/${businesses[0].slug}/admin`);
             } else {
-                // No business found - strict separation means we tell them.
-                // We do NOT redirect to legacy or auto-create page.
-                const wantsToCreate = window.confirm("No commercial store found linked to this account. Would you like to create a new business account?");
-                if (wantsToCreate) {
-                    navigate('/a2z/seller/create-account');
-                } else {
-                    setError("No business account found associated with this email.");
-                    // Optional: logout to prevent stuck session
-                }
+                // No business found - Redirect to creation flow
+                navigate('/a2z/seller/create-account', { state: { fromLogin: true, email: user.email } });
             }
         } catch (err) {
             console.error("Login verify error:", err);
-            setError("Invalid email or password.");
+            // Distinguish between auth errors and logic errors
+            if (err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+                setError("Incorrect email or password.");
+            } else {
+                setError(err.message || "Login failed. Please try again.");
+            }
         } finally {
             setLoading(false);
         }
@@ -76,11 +100,64 @@ const BusinessLogin = () => {
                     </div>
 
                     {error && (
-                        <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm flex items-start gap-2">
-                            <span className="mt-0.5">⚠️</span>
-                            <span>{error}</span>
-                        </div>
+                        <div className="text-red-600 text-sm mt-1">{error}</div>
                     )}
+
+                    <div className="mb-6">
+                        <button
+                            onClick={async () => {
+                                try {
+                                    const user = await googleLogin();
+                                    if (user) {
+                                        // CHECK BAN STATUS & SELF-HEAL
+                                        let userDoc = await userService.getUser(user.uid);
+
+                                        if (!userDoc) {
+                                            // Self-Heal
+                                            await userService.createUser(user.uid, {
+                                                email: user.email,
+                                                name: user.displayName,
+                                                role: 'seller',
+                                                createdAt: new Date().toISOString()
+                                            });
+                                            userDoc = { status: 'active' };
+                                        }
+
+                                        // CHECK BLACKLIST (BANNED_USERS COLLECTION)
+                                        const isBanned = await adminService.isUserBanned(user.uid);
+                                        if (isBanned) {
+                                            await logout();
+                                            throw new Error("Your account has been blocked by the administrator.");
+                                        }
+
+                                        // Fetch business owned by this user
+                                        const businesses = await businessService.getBusinessByOwner(user.uid);
+                                        if (businesses && businesses.length > 0) {
+                                            navigate(`/a2z/${businesses[0].slug}/admin`);
+                                        } else {
+                                            navigate('/a2z/seller/create-account', { state: { fromLogin: true, email: user.email } });
+                                        }
+                                    }
+                                } catch (err) {
+                                    console.error("Google Login Error:", err);
+                                    setError(err.message || "Google Sign-In failed. Please try again.");
+                                }
+                            }}
+                            className="w-full flex justify-center py-2.5 px-4 border border-gray-300 rounded-xl shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 mb-6"
+                        >
+                            <img className="h-5 w-5 mr-3" src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google logo" />
+                            Sign in with Google
+                        </button>
+
+                        <div className="relative">
+                            <div className="absolute inset-0 flex items-center">
+                                <div className="w-full border-t border-gray-300" />
+                            </div>
+                            <div className="relative flex justify-center text-sm">
+                                <span className="px-2 bg-white text-gray-500">Or continue with email</span>
+                            </div>
+                        </div>
+                    </div>
 
                     <form onSubmit={handleSubmit} className="space-y-5">
                         <div className="space-y-4">
@@ -126,7 +203,7 @@ const BusinessLogin = () => {
                                 <input type="checkbox" className="mr-2 rounded text-indigo-600 focus:ring-indigo-500" />
                                 Remember me
                             </label>
-                            <Link to="/a2z/forgot-password" className="text-indigo-600 font-medium hover:underline">
+                            <Link to="/a2z/seller/forgot-password" className="text-indigo-600 font-medium hover:underline">
                                 Forgot password?
                             </Link>
                         </div>
@@ -145,7 +222,7 @@ const BusinessLogin = () => {
                     </p>
                 </div>
             </div>
-        </div>
+        </div >
     );
 };
 

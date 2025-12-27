@@ -48,7 +48,7 @@ const StoreShell = () => {
         );
     }
 
-    if (currentBusiness.status === 'rejected') {
+    if (currentBusiness.status === 'rejected' || currentBusiness.status === 'suspended' || currentBusiness.status === 'archived') {
         return (
             <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 text-center px-4">
                 <div className="bg-red-100 p-4 rounded-full mb-6">
@@ -56,8 +56,13 @@ const StoreShell = () => {
                 </div>
                 <h2 className="text-3xl font-bold text-gray-900 mb-4">Store Unavailable</h2>
                 <p className="text-red-600 mb-8 max-w-md mx-auto">
-                    This store has been suspended or rejected for violating platform policies.
+                    {currentBusiness.status === 'archived'
+                        ? "This store has been closed and is no longer available."
+                        : "This store has been suspended for violating platform policies or maintenance."}
                 </p>
+                <a href="/" className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+                    Go to Platform Home
+                </a>
             </div>
         );
     }

@@ -59,14 +59,24 @@ export const AuthProvider = ({ children }) => {
         return true;
     };
 
+    const sendVerification = async (user) => {
+        return authService.sendEmailVerification(user);
+    };
+
+    const googleLogin = async () => {
+        return authService.loginWithGoogle();
+    };
+
     const value = {
         currentUser,
         signup,
         login,
+        googleLogin,
         logout,
         updateProfile,
         resetPassword,
         verifyEmail,
+        sendVerification,
         loading
     };
 

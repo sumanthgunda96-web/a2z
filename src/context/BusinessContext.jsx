@@ -29,12 +29,14 @@ export const BusinessProvider = ({ children }) => {
             if (businessSlug) {
                 setLoading(true);
                 try {
+                    console.log(`[BusinessContext] Fetching business for slug: '${businessSlug}'`);
                     const business = await businessService.getBusinessBySlug(businessSlug);
+                    console.log(`[BusinessContext] Fetch result:`, business);
 
                     if (business) {
                         setCurrentBusiness(business);
                     } else {
-                        console.error(`Business not found: ${businessSlug}`);
+                        console.error(`[BusinessContext] Business not found: '${businessSlug}'`);
                         setCurrentBusiness(null);
                     }
                 } catch (err) {

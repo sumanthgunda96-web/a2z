@@ -4,7 +4,10 @@ import {
     signOut,
     onAuthStateChanged,
     updateProfile,
-    sendPasswordResetEmail
+    sendPasswordResetEmail,
+    sendEmailVerification as firebaseSendEmailVerification,
+    GoogleAuthProvider,
+    signInWithPopup
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
@@ -14,6 +17,32 @@ import { logUserToSheets } from '../../utils/sheetsService';
 export class FirebaseAuthService extends IAuthService {
     async login(email, password) {
         return await signInWithEmailAndPassword(auth, email, password);
+    }
+
+    async loginWithGoogle() {
+        const provider = new GoogleAuthProvider();
+        try {
+            const result = await signInWithPopup(auth, provider);
+            const user = result.user;
+
+            // Check if user exists in Firestore, if not create basic record
+            const userDoc = await getDoc(doc(db, 'users', user.uid));
+            if (!userDoc.exists()) {
+                await setDoc(doc(db, 'users', user.uid), {
+                    uid: user.uid,
+                    email: user.email,
+                    name: user.displayName,
+                    photoURL: user.photoURL,
+                    role: 'user', // Default role for Google Sign-In
+                    createdAt: new Date().toISOString()
+                });
+            }
+
+            return user;
+        } catch (error) {
+            console.error("Google Sign-In Error:", error);
+            throw error;
+        }
     }
 
     async register(email, password, name) {
@@ -55,7 +84,20 @@ export class FirebaseAuthService extends IAuthService {
     }
 
     async resetPassword(email) {
-        return await sendPasswordResetEmail(auth, email);
+        console.log("FirebaseAuthService: sending password reset email to", email);
+        try {
+            await sendPasswordResetEmail(auth, email);
+            console.log("FirebaseAuthService: reset email sent successfully");
+            return true;
+        } catch (error) {
+            console.error("FirebaseAuthService: reset email failed", error);
+            throw error;
+        }
+    }
+
+    async sendEmailVerification(user) {
+        console.log("Sending verification email to:", user.email);
+        return await firebaseSendEmailVerification(user);
     }
 
     async updateProfile(userId, updates) {

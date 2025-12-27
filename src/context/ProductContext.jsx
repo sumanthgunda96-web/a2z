@@ -29,7 +29,7 @@ export const ProductProvider = ({ children }) => {
             // Includes legacy products (no businessId) ONLY for the main store
             const filteredProducts = updatedProducts.filter(p =>
                 p.businessId === currentBusiness.id ||
-                (!p.businessId && currentBusiness.slug === 'gundasrinivasfireworks')
+                (!p.businessId && currentBusiness.slug === 'a2z-demo')
             );
             setProducts(filteredProducts);
             setLoading(false);

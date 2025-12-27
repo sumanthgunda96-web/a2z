@@ -2,13 +2,15 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { FirestoreBusinessService } from '../services/firebase/FirestoreBusinessService';
+import { FirestoreUserService } from '../services/firebase/FirestoreUserService';
 import { Store, User, Mail, Lock, ArrowRight, Loader, CheckCircle } from 'lucide-react';
 
 const CreateBusinessAccount = () => {
     const navigate = useNavigate();
-    const { signup } = useAuth();
+    const { signup, currentUser, sendVerification, login, googleLogin } = useAuth(); // Assuming sendVerification is exposed or we use Firebase directly
     const [successMode, setSuccessMode] = useState(false);
     const [step, setStep] = useState(1);
+    const [existingUserMode, setExistingUserMode] = useState(false);
 
     const [formData, setFormData] = useState({
         businessName: '',
@@ -23,6 +25,20 @@ const CreateBusinessAccount = () => {
     const [error, setError] = useState('');
 
     const businessService = new FirestoreBusinessService();
+    const userService = new FirestoreUserService();
+
+    // Check for existing user state on mount
+    React.useEffect(() => {
+        if (currentUser) {
+            setExistingUserMode(true);
+            setFormData(prev => ({
+                ...prev,
+                email: currentUser.email,
+                fullName: currentUser.displayName || '',
+                // Password not needed in this mode
+            }));
+        }
+    }, [currentUser]);
 
     // ... (handleChange and handleSlugChange remain same)
 
@@ -52,40 +68,131 @@ const CreateBusinessAccount = () => {
 
         try {
             // 1. Validation
-            if (formData.password !== formData.confirmPassword) throw new Error("Passwords do not match");
-            if (formData.password.length < 6) throw new Error("Password must be at least 6 characters");
+            if (!existingUserMode) {
+                if (formData.password !== formData.confirmPassword) throw new Error("Passwords do not match");
+                if (formData.password.length < 6) throw new Error("Password must be at least 6 characters");
+            }
             if (formData.slug.length < 3) throw new Error("Store URL must be at least 3 characters");
 
             // 2. Check slug
             const isTaken = await businessService.isSlugTaken(formData.slug);
             if (isTaken) throw new Error("This Store URL is already taken. Please choose another.");
 
-            // 3. Create User
-            const userCredential = await signup(formData.email, formData.password, formData.fullName);
-            const user = userCredential.user || userCredential;
+            let user;
 
-            // 4. Create Business (PENDING)
+            if (existingUserMode) {
+                user = currentUser;
+            } else {
+                // 3. Create User
+                const userCredential = await signup(formData.email, formData.password, formData.fullName);
+                user = userCredential.user || userCredential;
+
+                // 4. Send Verification Email (Firebase Native)
+                try {
+                    await sendVerification(user);
+
+                } catch (emailErr) {
+                    console.error("Verification Email Failed", emailErr);
+                    // Don't block creation, but warn? Or assume auto-sent by Firebase?
+                }
+            }
+
+            // FORCE SELLER ROLE UPDATE
+            try {
+                await userService.createUser(user.uid, {
+                    email: user.email,
+                    name: formData.fullName || user.displayName,
+                    role: 'seller', // Explicitly set as seller
+                    updatedAt: new Date().toISOString()
+                });
+            } catch (roleErr) {
+                console.error("Failed to set seller role:", roleErr);
+                // Continue, but maybe warn?
+            }
+
+            // 5. Create Business
             await businessService.createBusiness({
                 name: formData.businessName,
                 slug: formData.slug,
                 ownerId: user.uid,
                 ownerEmail: user.email,
                 themeColor: '#4f46e5',
-                status: 'pending' // Enforce approval workflow
+                status: 'pending'
             });
 
-            // 5. Show Success UI
+            // 6. Show Success UI
             setSuccessMode(true);
 
         } catch (err) {
             console.error("Signup Error:", err);
+
+            // AUTO-RECOVERY: If account exists, try to log them in!
             if (err.code === 'auth/email-already-in-use') {
-                setError("An account with this email already exists. Please login.");
+                try {
+                    console.log("Account exists, attempting auto-login...");
+                    const userCredential = await login(formData.email, formData.password);
+                    const user = userCredential.user;
+
+                    // Ensure role is seller if they are making a business
+                    await userService.createUser(user.uid, {
+                        email: user.email,
+                        role: 'seller',
+                        updatedAt: new Date().toISOString()
+                    });
+
+                    // If login succeeds, proceed to create business
+                    await businessService.createBusiness({
+                        name: formData.businessName,
+                        slug: formData.slug,
+                        ownerId: user.uid,
+                        ownerEmail: user.email,
+                        themeColor: '#4f46e5',
+                        status: 'pending'
+                    });
+
+                    setSuccessMode(true);
+                    return; // Exit success
+
+                } catch (loginErr) {
+                    // Login failed (probably wrong password)
+                    setError("An account with this email already exists, but the password provided was incorrect. Please login normally.");
+                }
             } else {
                 setError(err.message || "Failed to create account");
             }
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleGoogleSignup = async () => {
+        try {
+            const user = await googleLogin();
+            if (user) {
+                // Check if slug is taken
+                if (isTaken) throw new Error("This Store URL is already taken. Please choose another.");
+
+                // FORCE SELLER ROLE
+                await userService.createUser(user.uid, {
+                    email: user.email,
+                    role: 'seller',
+                    name: user.displayName,
+                    updatedAt: new Date().toISOString()
+                });
+
+                await businessService.createBusiness({
+                    name: formData.businessName,
+                    slug: formData.slug,
+                    ownerId: user.uid,
+                    ownerEmail: user.email,
+                    themeColor: '#4f46e5',
+                    status: 'pending'
+                });
+                setSuccessMode(true);
+            }
+        } catch (error) {
+            console.error("Google Signup Error", error);
+            setError(error.message);
         }
     };
 
@@ -100,14 +207,20 @@ const CreateBusinessAccount = () => {
                     <p className="text-gray-600 mb-6">
                         Your store <span className="font-semibold text-indigo-600">/a2z/{formData.slug}</span> has been created.
                     </p>
+                    {!existingUserMode && <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-left mb-4">
+                        <h3 className="font-bold text-blue-800 text-sm mb-1">📧 Verify Your Email</h3>
+                        <p className="text-blue-700 text-sm">
+                            We have sent a verification link to <strong>{formData.email}</strong>. Please check your inbox and verify your email before logging in.
+                        </p>
+                    </div>}
                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-left mb-8">
                         <h3 className="font-bold text-amber-800 text-sm mb-1">⚠️ Approval Required</h3>
                         <p className="text-amber-700 text-sm">
-                            For quality assurance, all new businesses must be approved by an administrator before they can go live. You will be notified via email once approved.
+                            For quality assurance, your store must be approved by an administrator. You will be notified via email once approved.
                         </p>
                     </div>
-                    <Link to="/" className="block w-full py-3 px-4 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors">
-                        Return to Home
+                    <Link to="/a2z/seller/login" className="block w-full py-3 px-4 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors">
+                        Proceed to Login
                     </Link>
                 </div>
             </div>
@@ -160,7 +273,7 @@ const CreateBusinessAccount = () => {
                                         name="businessName"
                                         value={formData.businessName}
                                         onChange={handleChange}
-                                        placeholder="e.g. Srinivas Fireworks"
+                                        placeholder="e.g. My Business"
                                         className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                                         required
                                     />
@@ -188,71 +301,86 @@ const CreateBusinessAccount = () => {
                         <hr className="border-gray-100" />
 
                         {/* Owner Details Section */}
-                        <div className="space-y-4">
-                            <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">Owner Login</h3>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-                                <div className="relative">
-                                    <User className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
-                                    <input
-                                        type="text"
-                                        name="fullName"
-                                        value={formData.fullName}
-                                        onChange={handleChange}
-                                        placeholder="Your Name"
-                                        className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                                        required
-                                    />
-                                </div>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                                <div className="relative">
-                                    <Mail className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
-                                    <input
-                                        type="email"
-                                        name="email"
-                                        value={formData.email}
-                                        onChange={handleChange}
-                                        placeholder="you@example.com"
-                                        className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                                        required
-                                    />
-                                </div>
-                            </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {!existingUserMode ? (
+                            <div className="space-y-4">
+                                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">Owner Login</h3>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
                                     <div className="relative">
-                                        <Lock className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
+                                        <User className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
                                         <input
-                                            type="password"
-                                            name="password"
-                                            value={formData.password}
+                                            type="text"
+                                            name="fullName"
+                                            value={formData.fullName}
                                             onChange={handleChange}
-                                            placeholder="••••••"
+                                            placeholder="Your Name"
                                             className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                                             required
                                         />
                                     </div>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Confirm</label>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                                     <div className="relative">
-                                        <Lock className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
+                                        <Mail className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
                                         <input
-                                            type="password"
-                                            name="confirmPassword"
-                                            value={formData.confirmPassword}
+                                            type="email"
+                                            name="email"
+                                            value={formData.email}
                                             onChange={handleChange}
-                                            placeholder="••••••"
+                                            placeholder="you@example.com"
                                             className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                                             required
                                         />
                                     </div>
                                 </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                                        <div className="relative">
+                                            <Lock className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
+                                            <input
+                                                type="password"
+                                                name="password"
+                                                value={formData.password}
+                                                onChange={handleChange}
+                                                placeholder="••••••"
+                                                className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                                                required
+                                            />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Confirm</label>
+                                        <div className="relative">
+                                            <Lock className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
+                                            <input
+                                                type="password"
+                                                name="confirmPassword"
+                                                value={formData.confirmPassword}
+                                                onChange={handleChange}
+                                                placeholder="••••••"
+                                                className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                                                required
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
+                        ) : (
+                            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="bg-indigo-100 p-2 rounded-full">
+                                        <User className="w-5 h-5 text-indigo-600" />
+                                    </div>
+                                    <div>
+                                        <h4 className="text-sm font-bold text-indigo-900">Current Login</h4>
+                                        <p className="text-xs text-indigo-700">{currentUser.email}</p>
+                                    </div>
+                                </div>
+                                {/* Optional: Logout button could go here */}
+                            </div>
+                        )}
 
                         <button
                             type="submit"
